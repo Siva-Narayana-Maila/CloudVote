@@ -1,0 +1,94 @@
+version: '3.9'
+
+# Runs the entire CloudVote stack locally — Postgres, all 3 microservices,
+# the gateway, and the frontend — with zero cloud dependency. Every service
+# below is configured purely through environment variables, so when you're
+# ready to deploy, the k8s/ manifests reuse these exact same variable names;
+# only the *values* change (e.g. DATABASE_URL points at Cloud SQL instead of
+# this local `postgres` container). No application code changes.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudvote
+      POSTGRES_PASSWORD: cloudvote
+      POSTGRES_DB: cloudvote
+    ports:
+      - '5432:5432'
+    volumes:
+      - cloudvote_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cloudvote']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build: ./services/auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4001
+      DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-any-real-use}
+    ports:
+      - '4001:4001'
+
+  voting-service:
+    build: ./services/voting-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    environment:
+      PORT: 4002
+      DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-any-real-use}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+    ports:
+      - '4002:4002'
+
+  tally-service:
+    build: ./services/tally-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4003
+      DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
+    ports:
+      - '4003:4003'
+
+  api-gateway:
+    build: ./api-gateway
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - voting-service
+      - tally-service
+    environment:
+      PORT: 8080
+      CORS_ORIGIN: http://localhost:3000
+      AUTH_SERVICE_URL: http://auth-service:4001
+      VOTING_SERVICE_URL: http://voting-service:4002
+      TALLY_SERVICE_URL: http://tally-service:4003
+    ports:
+      - '8080:8080'
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+    ports:
+      - '3000:80'
+
+volumes:
+  cloudvote_pgdata:
