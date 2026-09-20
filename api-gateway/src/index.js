@@ -61,6 +61,15 @@ app.use(
     pathRewrite: () => '/vote',
   })
 );
+// /api/my-votes -> voting-service GET /my-votes
+app.use(
+  '/api/my-votes',
+  createProxyMiddleware({
+    target: VOTING_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: () => '/my-votes',
+  })
+);
 
 // /api/results -> tally-service GET /results (single endpoint)
 // /api/election -> tally-service GET /election

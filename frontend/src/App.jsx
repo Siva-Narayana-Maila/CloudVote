@@ -10,6 +10,7 @@ import Results from './pages/Results';
 import VerifyReceipt from './pages/VerifyReceipt';
 import Admin from './pages/Admin';
 import Footer from './components/Footer';
+import Profile from './pages/Profile';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/signin" element={<SignIn />} />
         <Route path="/mfa-setup" element={<MfaSetup />} />
         <Route path="/vote" element={<Vote />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/receipt" element={<Receipt />} />
         <Route path="/results" element={<Results />} />
         <Route path="/verify" element={<VerifyReceipt />} />

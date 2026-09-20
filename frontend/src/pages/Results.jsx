@@ -1,11 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
-const CANDIDATE_COLORS = {
-  'mara-ellison': 'var(--color-candidate-a)',
-  'jonah-park': 'var(--color-candidate-b)',
-  'aisha-mensah': 'var(--color-candidate-c)',
-};
+
 
 export default function Results() {
   const [results, setResults] = useState(null);
@@ -97,11 +93,11 @@ export default function Results() {
 }
 
 function CandidateRow({ r }) {
-  const color = CANDIDATE_COLORS[r.candidateId] || 'var(--color-teal-700)';
+  const color = r.color || 'var(--color-teal-700)';
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginBottom: 6 }}>
-        <span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span
             style={{
               display: 'inline-block',
@@ -109,9 +105,9 @@ function CandidateRow({ r }) {
               height: 8,
               borderRadius: '50%',
               background: color,
-              marginRight: 8,
             }}
           />
+          {r.symbol && <span style={{ fontSize: 14 }}>{r.symbol}</span>}
           {r.name}
         </span>
         <span style={{ fontWeight: 500 }}>

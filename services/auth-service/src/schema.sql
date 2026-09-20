@@ -62,3 +62,23 @@ CREATE TABLE IF NOT EXISTS candidates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_candidates_election ON candidates(election_id);
+
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS symbol TEXT;
+
+-- Per-user voting history. PRIVACY NOTE: this links a user to their own
+-- receipt_id so THAT SAME USER can look up which candidate they picked,
+-- later, on their profile page. It does not let the ledger itself, other
+-- users, or the public /ledger/verify endpoint reveal anyone's choice — but
+-- it does mean anyone with direct database access could join
+-- user_votes -> vote_ledger and deanonymize every voter. This is a
+-- deliberate tradeoff to support "my voting history"; a stricter design
+-- would hand the user only their receipt ID at vote time and never store
+-- the link server-side at all.
+CREATE TABLE IF NOT EXISTS user_votes (
+    user_id      UUID NOT NULL REFERENCES users(id),
+    election_id  UUID NOT NULL REFERENCES elections(id),
+    receipt_id   TEXT NOT NULL REFERENCES vote_ledger(receipt_id),
+    cast_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, election_id)
+);

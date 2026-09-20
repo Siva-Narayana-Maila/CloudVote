@@ -1,9 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Local dev talks straight to the API Gateway on :8080 (proxied here so the
-// browser only ever sees one origin, same as it will in production once
-// this is served behind a real domain + gateway).
+
 export default defineConfig({
   plugins: [react()],
   server: {

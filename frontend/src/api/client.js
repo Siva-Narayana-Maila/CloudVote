@@ -53,4 +53,7 @@ export const api = {
   getToken,
   setToken,
   clearToken,
+  getProfile: () => request('/auth/me', { auth: true }),
+  updateProfile: (payload) => request('/auth/me', { method: 'PATCH', body: payload, auth: true }),
+  getMyVotes: () => request('/my-votes', { auth: true }),
 };

@@ -102,22 +102,32 @@ export default function Vote() {
               border: selected === c.id ? `2px solid ${c.color || 'var(--color-teal-700)'}` : '1px solid var(--color-border)',
             }}
           >
-            <div
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: '50%',
-                background: c.color || 'var(--color-teal-700)',
-                color: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 12,
-                fontWeight: 600,
-                marginBottom: 12,
-              }}
-            >
-              {c.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              {c.photo_url ? (
+                <img
+                  src={c.photo_url}
+                  alt={c.name}
+                  style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${c.color || 'var(--color-teal-700)'}` }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: '50%',
+                    background: c.color || 'var(--color-teal-700)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                >
+                  {c.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
+                </div>
+              )}
+              {c.symbol && <span style={{ fontSize: 24 }}>{c.symbol}</span>}
             </div>
             <p style={{ fontWeight: 600, color: 'var(--color-ink)', fontSize: 14.5 }}>{c.name}</p>
             <p style={{ fontSize: 12.5, color: c.color || 'var(--color-teal-700)', fontWeight: 500, marginTop: 2 }}>{c.role}</p>

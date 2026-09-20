@@ -5,7 +5,7 @@ export default function Overview() {
     <div className="shell" style={{ paddingTop: 56 }}>
       <span className="eyebrow">
         <span className="status-dot" />
-        Election room / 2025
+        Election room / 2026
       </span>
 
       <h1 style={{ fontSize: 44, marginTop: 20, maxWidth: 460 }}>
