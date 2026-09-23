@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../api/client';
 
 const BASE = '/api/admin';
 
 export default function Admin() {
-  const [adminKey, setAdminKey] = useState('');
+  const navigate = useNavigate();
+  const adminToken = api.getAdminToken();
+
   const [elections, setElections] = useState([]);
   const [selected, setSelected] = useState(null);
   const [electionName, setElectionName] = useState('');
@@ -16,7 +20,7 @@ export default function Admin() {
   }
 
   function authHeaders() {
-    return { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey };
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` };
   }
 
   async function loadElections() {
@@ -25,6 +29,11 @@ export default function Admin() {
     if (!res.ok) return appendLog(`Error: ${data.error}`);
     setElections(data.elections);
   }
+
+  useEffect(() => {
+    if (adminToken) loadElections();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadElection(id) {
     const res = await fetch(`${BASE}/elections/${id}`, { headers: authHeaders() });
@@ -105,7 +114,7 @@ export default function Admin() {
   async function downloadReport() {
     if (!selected) return;
     const res = await fetch(`${BASE}/elections/${selected.id}/report.xlsx`, {
-      headers: { 'X-Admin-Key': adminKey },
+      headers: { Authorization: `Bearer ${adminToken}` },
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -122,20 +131,28 @@ export default function Admin() {
     URL.revokeObjectURL(url);
   }
 
+  function handleSignOut() {
+    api.clearAdminToken();
+    navigate('/admin/login');
+  }
+
+  if (!adminToken) {
+    return (
+      <div className="shell" style={{ paddingTop: 64, textAlign: 'center' }}>
+        <p style={{ marginBottom: 16 }}>Admin sign-in required.</p>
+        <a href="/admin/login" className="btn btn-primary">Admin sign in →</a>
+      </div>
+    );
+  }
+
   return (
     <div className="shell" style={{ paddingTop: 48, maxWidth: 760 }}>
-      <h1 style={{ fontSize: 26 }}>Admin portal</h1>
-      <p style={{ marginTop: 8, fontSize: 13 }}>Not linked from navigation on purpose — bookmark this page.</p>
-
-      <div className="card" style={{ padding: 20, marginTop: 20 }}>
-        <label style={{ fontSize: 12.5, fontWeight: 500 }}>Admin key</label>
-        <input value={adminKey} onChange={(e) => setAdminKey(e.target.value)} style={inputStyle} type="password" />
-        <button className="btn btn-secondary" onClick={loadElections} style={{ marginTop: 6 }}>
-          Load elections
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 style={{ fontSize: 26 }}>Admin portal</h1>
+        <button className="btn btn-secondary" onClick={handleSignOut}>Sign out</button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16, marginTop: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16, marginTop: 20 }}>
         <div className="card" style={{ padding: 20 }}>
           <h3 style={{ fontSize: 15, marginBottom: 12 }}>Elections</h3>
           {elections.map((e) => (

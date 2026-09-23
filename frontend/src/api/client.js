@@ -16,6 +16,15 @@ function setToken(token) {
 function clearToken() {
   sessionStorage.removeItem('cloudvote_token');
 }
+function getAdminToken() {
+  return sessionStorage.getItem('cloudvote_admin_token');
+}
+function setAdminToken(token) {
+  sessionStorage.setItem('cloudvote_admin_token', token);
+}
+function clearAdminToken() {
+  sessionStorage.removeItem('cloudvote_admin_token');
+}
 
 async function request(path, { method = 'GET', body, auth = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -53,6 +62,9 @@ export const api = {
   getToken,
   setToken,
   clearToken,
+  getAdminToken,
+  setAdminToken,
+  clearAdminToken,
   getProfile: () => request('/auth/me', { auth: true }),
   updateProfile: (payload) => request('/auth/me', { method: 'PATCH', body: payload, auth: true }),
   getMyVotes: () => request('/my-votes', { auth: true }),

@@ -119,40 +119,67 @@ app.post('/mfa/confirm-setup', requireAuth, async (req, res) => {
 // --- Login: step 1 (password) then step 2 (MFA code) ----------------------
 // Matches the two-step flow in the UI design: work email -> "one additional
 // verification code".
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
   }
-
   const result = await pool.query('SELECT * FROM users WHERE email = $1', [
     email.toLowerCase().trim(),
   ]);
   const user = result.rows[0];
-
-  // Constant-shape response whether or not the user exists, to avoid
-  // leaking which emails are registered.
   const invalidCreds = () => res.status(401).json({ error: 'invalid email or password' });
-
   if (!user) return invalidCreds();
+
+  // Account lockout: block login attempts entirely while locked, regardless
+  // of whether the password given this time is correct — that's what
+  // actually stops a brute-force loop, not just rejecting wrong guesses
+  // one at a time.
+  if (user.locked_until && new Date(user.locked_until) > new Date()) {
+    const minutesLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+    return res.status(423).json({
+      error: `too many failed attempts — try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}`,
+    });
+  }
+
   const passwordOk = await bcrypt.compare(password, user.password_hash);
-  if (!passwordOk) return invalidCreds();
+  if (!passwordOk) {
+    const attempts = user.failed_attempts + 1;
+    if (attempts >= MAX_LOGIN_ATTEMPTS) {
+      const lockedUntil = new Date(Date.now() + LOCKOUT_MINUTES * 60000);
+      await pool.query('UPDATE users SET failed_attempts = 0, locked_until = $1 WHERE id = $2', [
+        lockedUntil,
+        user.id,
+      ]);
+      return res.status(423).json({
+        error: `too many failed attempts — account locked for ${LOCKOUT_MINUTES} minutes`,
+      });
+    }
+    await pool.query('UPDATE users SET failed_attempts = $1 WHERE id = $2', [attempts, user.id]);
+    return invalidCreds();
+  }
+
+  // Successful password — clear any lockout tracking.
+  if (user.failed_attempts > 0 || user.locked_until) {
+    await pool.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+  }
 
   if (user.mfa_enabled) {
-    // Password correct, but MFA code still required — issue a short-lived
-    // "pre-auth" token that only /mfa/verify accepts, not a full session JWT.
     const preAuthToken = jwt.sign({ sub: user.id, stage: 'pre-mfa' }, JWT_SECRET, {
       expiresIn: '5m',
     });
     return res.json({ mfaRequired: true, preAuthToken });
   }
-
-  // No MFA enabled yet — issue full session token directly.
-  const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, {
+    const token = jwt.sign({ sub: user.id, email: user.email, isAdmin: false }, JWT_SECRET, {
+   
     expiresIn: JWT_EXPIRY,
   });
   res.json({ mfaRequired: false, token });
 });
+
 
 // --- Login: step 2 (verify TOTP code) --------------------------------------
 app.post('/mfa/verify', async (req, res) => {
@@ -182,12 +209,43 @@ app.post('/mfa/verify', async (req, res) => {
     window: 1, // allow 1 step (~30s) of clock drift
   });
 
-  if (!verified) return res.status(401).json({ error: 'invalid MFA code' });
-
-  const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, {
+    if (!verified) return res.status(401).json({ error: 'invalid MFA code' });
+  const token = jwt.sign({ sub: user.id, email: user.email, isAdmin: user.is_admin }, JWT_SECRET, {
+    // This is the ONLY place isAdmin can be true in an issued token — i.e.
+    // only ever right after a successful MFA check.
     expiresIn: JWT_EXPIRY,
   });
   res.json({ token });
+});
+
+// One-time bootstrap: promotes an existing (already-registered) account to
+// admin. Protected by the shared ADMIN_API_KEY, used only for this — every
+// admin action after promotion uses that admin's own normal login + MFA,
+// never the shared key again. Since isAdmin is only ever granted in a
+// post-MFA token (see /mfa/verify above), a promoted account can't actually
+// use any admin feature until it has MFA set up (/mfa-setup, same flow
+// every user goes through).
+app.post('/admin/promote', async (req, res) => {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ error: 'invalid or missing admin key' });
+  }
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email is required' });
+
+  const result = await pool.query(
+    'UPDATE users SET is_admin = true WHERE email = $1 RETURNING id, email, is_admin, mfa_enabled',
+    [email.toLowerCase().trim()]
+  );
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: 'no account with that email — register and log in first' });
+  }
+  res.json({
+    message: result.rows[0].mfa_enabled
+      ? 'account promoted to admin'
+      : 'account promoted to admin — set up MFA (via /mfa-setup) before admin features will work, since admin access is only ever granted right after MFA verification',
+    user: result.rows[0],
+  });
 });
 
 // --- Token verification endpoint, used by API Gateway / other services ---

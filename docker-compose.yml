@@ -35,6 +35,7 @@ services:
       PORT: 4001
       DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-any-real-use}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
     ports:
       - '4001:4001'
 

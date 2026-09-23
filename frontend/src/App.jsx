@@ -11,6 +11,7 @@ import VerifyReceipt from './pages/VerifyReceipt';
 import Admin from './pages/Admin';
 import Footer from './components/Footer';
 import Profile from './pages/Profile';
+import AdminLogin from './pages/AdminLogin';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/results" element={<Results />} />
         <Route path="/verify" element={<VerifyReceipt />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/admin/login" element={<AdminLogin />} />
       </Routes>
       <Footer />
     </>

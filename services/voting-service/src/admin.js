@@ -1,18 +1,28 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const ExcelJS = require('exceljs');
 const router = express.Router();
 
-// Minimal shared-secret admin auth — appropriate for project scope. Set
-// ADMIN_API_KEY in the environment; every admin request must send it back
-// in the X-Admin-Key header.
+// Verifies a normal session JWT (the same one auth-service issues on
+// login) and requires its isAdmin claim to be true. Since auth-service
+// only ever sets isAdmin: true in a token issued right after a successful
+// MFA check, this makes "admin access requires MFA every time" a
+// structural fact rather than a header someone could share or leak.
 function requireAdmin(req, res, next) {
-  const key = req.headers['x-admin-key'];
-  if (!key || key !== process.env.ADMIN_API_KEY) {
-    return res.status(401).json({ error: 'invalid or missing admin key' });
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'missing bearer token' });
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    if (!payload.isAdmin) {
+      return res.status(403).json({ error: 'this account does not have admin access' });
+    }
+    req.admin = payload;
+    next();
+  } catch {
+    res.status(401).json({ error: 'invalid or expired token' });
   }
-  next();
 }
-
 module.exports = function adminRouter(pool) {
   router.use(requireAdmin);
 

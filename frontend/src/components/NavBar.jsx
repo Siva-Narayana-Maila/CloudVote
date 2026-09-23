@@ -40,6 +40,9 @@ export default function NavBar() {
         <NavLink to="/results" className={({ isActive }) => (isActive ? 'active' : '')}>
           Live results
         </NavLink>
+        <NavLink to="/verify" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Verify Vote
+        </NavLink>
         {signedIn && (
           <NavLink to="/profile" className={({ isActive }) => (isActive ? 'active' : '')}>
             Profile
