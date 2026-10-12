@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import Logo from '../components/Logo';
 
 export default function MfaSetup() {
   const navigate = useNavigate();
@@ -57,7 +58,10 @@ export default function MfaSetup() {
 
   return (
     <div className="shell" style={{ display: 'flex', justifyContent: 'center', paddingTop: 56 }}>
-      <div className="card" style={{ padding: 32, width: 420 }}>
+            <div className="card" style={{ padding: 32, width: 420 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <Logo size={40} wordmarkSize={20} />
+        </div>
         <span className="eyebrow">Step 2 of 2</span>
         <h2 style={{ fontSize: 22, marginTop: 16 }}>Set up two-factor authentication.</h2>
         <p style={{ marginTop: 8, fontSize: 13.5 }}>

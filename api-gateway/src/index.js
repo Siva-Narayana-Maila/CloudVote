@@ -9,41 +9,62 @@ const app = express();
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
 
-// System-wide rate limiting at the edge — the first line of defense before
-// traffic ever reaches a backend service.
+// --- Service locations -----------------------------------------------------
+// The ONLY place that changes between environments: container names in
+// Docker Compose, Kubernetes Service DNS names later — set purely through
+// environment variables, no code change.
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:4001';
+const VOTING_SERVICE_URL = process.env.VOTING_SERVICE_URL || 'http://localhost:4002';
+const TALLY_SERVICE_URL = process.env.TALLY_SERVICE_URL || 'http://localhost:4003';
+
+// Health + status routes sit ABOVE the rate limiter so frequent polling by
+// the navbar's status indicator never eats into anyone's request budget.
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'api-gateway' }));
+
+// Pings each downstream service's /health endpoint and reports the result.
+async function checkService(name, url) {
+  const started = Date.now();
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2500) });
+    return { name, status: res.ok ? 'up' : 'degraded', latencyMs: Date.now() - started };
+  } catch {
+    return { name, status: 'down', latencyMs: null };
+  }
+}
+
+app.get('/api/status', async (_req, res) => {
+  const checks = await Promise.all([
+    checkService('Auth service', `${AUTH_SERVICE_URL}/health`),
+    checkService('Voting service', `${VOTING_SERVICE_URL}/health`),
+    checkService('Tally service', `${TALLY_SERVICE_URL}/health`),
+    checkService('PostgreSQL database', `${TALLY_SERVICE_URL}/health/db`),
+  ]);
+  const services = [{ name: 'API gateway', status: 'up', latencyMs: 0 }, ...checks];
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    overall: services.every((s) => s.status === 'up') ? 'operational' : 'degraded',
+    services,
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+// System-wide rate limiting at the edge. In Docker Compose every browser
+// request reaches the gateway from the frontend container's single address,
+// so this budget is effectively shared — hence the generous ceiling.
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
   })
 );
 
-// --- Service locations -----------------------------------------------------
-// This is the ONLY place that needs to change when moving between
-// environments: local Docker Compose uses container names
-// (http://auth-service:4001), a later Kubernetes deployment would use
-// K8s Service DNS names (http://auth-service.cloudvote.svc.cluster.local),
-// and each is set purely via environment variables — no code change needed.
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:4001';
-const VOTING_SERVICE_URL = process.env.VOTING_SERVICE_URL || 'http://localhost:4002';
-const TALLY_SERVICE_URL = process.env.TALLY_SERVICE_URL || 'http://localhost:4003';
+// NOTE on pathRewrite: Express strips the app.use() mount path before the
+// proxy sees the request, so a regex like '^/api/vote' can never match.
+// Function-form rewrites rebuild the target path explicitly instead.
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'api-gateway' }));
-
-// NOTE on pathRewrite below: Express strips the app.use() mount path from
-// req.url *before* the proxy middleware ever sees it. So mounting at
-// '/api/vote' means the proxy receives '/' (not '/api/vote'), and a
-// pathRewrite regex like '^/api/vote' can never match — it silently
-// no-ops and the request gets forwarded to the target's root path
-// instead of '/vote'. Using a function form of pathRewrite that
-// reconstructs the target path explicitly avoids this entirely.
-
-// /api/auth/*  -> auth-service /*
-// Express already strips '/api/auth', leaving e.g. '/register', '/login',
-// '/mfa/setup' — which happen to be auth-service's actual route paths, so
-// no rewrite is needed here at all.
+// /api/auth/*  -> auth-service /*  (Express already strips '/api/auth')
 app.use(
   '/api/auth',
   createProxyMiddleware({
@@ -52,7 +73,7 @@ app.use(
   })
 );
 
-// /api/vote  -> voting-service POST /vote (single endpoint, no sub-paths)
+// /api/vote -> voting-service POST /vote
 app.use(
   '/api/vote',
   createProxyMiddleware({
@@ -61,6 +82,7 @@ app.use(
     pathRewrite: () => '/vote',
   })
 );
+
 // /api/my-votes -> voting-service GET /my-votes
 app.use(
   '/api/my-votes',
@@ -71,7 +93,6 @@ app.use(
   })
 );
 
-// /api/results -> tally-service GET /results (single endpoint)
 // /api/election -> tally-service GET /election
 app.use(
   '/api/election',
@@ -79,6 +100,16 @@ app.use(
     target: TALLY_SERVICE_URL,
     changeOrigin: true,
     pathRewrite: () => '/election',
+  })
+);
+
+// /api/archive -> tally-service GET /archive
+app.use(
+  '/api/archive',
+  createProxyMiddleware({
+    target: TALLY_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: () => '/archive',
   })
 );
 
@@ -102,7 +133,7 @@ app.use(
   })
 );
 
-// /api/admin/* -> voting-service /admin/*
+// /api/admin/* -> voting-service /admin/*  (query strings are preserved)
 app.use(
   '/api/admin',
   createProxyMiddleware({
@@ -111,6 +142,7 @@ app.use(
     pathRewrite: (path) => `/admin${path === '/' ? '' : path}`,
   })
 );
+
 app.use((_req, res) => res.status(404).json({ error: 'not found' }));
 
 const PORT = process.env.PORT || 8080;

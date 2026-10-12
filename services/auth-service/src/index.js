@@ -11,9 +11,12 @@ const { pool, initSchema } = require('./db');
 const app = express();
 app.use(helmet());
 app.use(express.json());
+// Health check sits ABOVE the rate limiter so the gateway's frequent status
+// checks never eat into the login budget.
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'auth-service' }));
 
-// Basic brute-force guard on login/register — the API Gateway does the
-// heavier rate limiting for the whole system; this is defense-in-depth.
+// Basic brute-force guard — the API Gateway does the heavier rate limiting
+// for the whole system; this is defense-in-depth.
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -31,9 +34,8 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-// Verifies a normal session JWT (issued by /login once a user exists,
-// MFA-enabled or not). Used to protect the MFA enrollment endpoints below,
-// so setting up MFA always requires already having proven your password.
+// Verifies a normal session JWT. Used to protect the MFA enrollment and
+// profile endpoints.
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -46,29 +48,41 @@ function requireAuth(req, res, next) {
   }
 }
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'auth-service' }));
+// Password rules enforced on the server so they can't be bypassed by
+// skipping the signup form's client-side checks.
+function isPasswordStrong(password) {
+  return (
+    typeof password === 'string' &&
+    password.length >= 8 &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password)
+  );
+}
+
+const PASSWORD_RULE_MESSAGE =
+  'password must be at least 8 characters and include an uppercase letter and a number';
+
+
 
 // --- Registration ---------------------------------------------------------
 app.post('/register', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'email and password are required' });
+  const { fullName, email, password } = req.body;
+  if (!fullName || !fullName.trim() || !email || !password) {
+    return res.status(400).json({ error: 'full name, email and password are required' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  if (!isPasswordStrong(password)) {
+    return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
   }
-
   try {
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash) VALUES ($1, $2)
-       RETURNING id, email, created_at`,
-      [email.toLowerCase().trim(), passwordHash]
+      `INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3)
+       RETURNING id, full_name, email, created_at`,
+      [fullName.trim(), email.toLowerCase().trim(), passwordHash]
     );
     res.status(201).json({ user: result.rows[0] });
   } catch (err) {
     if (err.code === '23505') {
-      // unique_violation on email
       return res.status(409).json({ error: 'an account with this email already exists' });
     }
     console.error(err);
@@ -76,24 +90,18 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// --- MFA enrollment: step 1 — call while logged in (before MFA is active)
-// to generate a secret and get a QR code to scan. Requires a valid session
-// token, which a fresh registration + login already provides even with
-// MFA not yet enabled (see /login below).
+// --- MFA enrollment: step 1 — generate a secret and QR code ----------------
 app.post('/mfa/setup', requireAuth, async (req, res) => {
-  const secret = speakeasy.generateSecret({ name: `CloudVote (${req.user.email})` });
+  const secret = speakeasy.generateSecret({ name: `Ballotique (${req.user.email})` });
   await pool.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [
     secret.base32,
     req.user.sub,
   ]);
-
   const qrDataUrl = await qrcode.toDataURL(secret.otpauth_url);
   res.json({ qrCode: qrDataUrl, manualEntryKey: secret.base32 });
 });
 
-// --- MFA enrollment: step 2 — confirm the code from the authenticator app
-// actually matches, then flip mfa_enabled on. From this point forward,
-// /login will require the pre-auth + /mfa/verify flow below.
+// --- MFA enrollment: step 2 — confirm the code, then turn MFA on -----------
 app.post('/mfa/confirm-setup', requireAuth, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'code is required' });
@@ -110,15 +118,15 @@ app.post('/mfa/confirm-setup', requireAuth, async (req, res) => {
     token: code,
     window: 1,
   });
-  if (!verified) return res.status(401).json({ error: 'invalid code — check your authenticator app and try again' });
+  if (!verified) {
+    return res.status(401).json({ error: 'invalid code — check your authenticator app and try again' });
+  }
 
   await pool.query('UPDATE users SET mfa_enabled = true WHERE id = $1', [req.user.sub]);
   res.json({ message: 'MFA enabled' });
 });
 
-// --- Login: step 1 (password) then step 2 (MFA code) ----------------------
-// Matches the two-step flow in the UI design: work email -> "one additional
-// verification code".
+// --- Login (with account lockout) ------------------------------------------
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
@@ -134,10 +142,8 @@ app.post('/login', async (req, res) => {
   const invalidCreds = () => res.status(401).json({ error: 'invalid email or password' });
   if (!user) return invalidCreds();
 
-  // Account lockout: block login attempts entirely while locked, regardless
-  // of whether the password given this time is correct — that's what
-  // actually stops a brute-force loop, not just rejecting wrong guesses
-  // one at a time.
+  // Block login attempts entirely while locked, regardless of whether the
+  // password given this time is correct.
   if (user.locked_until && new Date(user.locked_until) > new Date()) {
     const minutesLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
     return res.status(423).json({
@@ -168,20 +174,24 @@ app.post('/login', async (req, res) => {
   }
 
   if (user.mfa_enabled) {
+    // Password is correct but an MFA code is still required — issue a
+    // short-lived "pre-auth" token that only /mfa/verify accepts.
     const preAuthToken = jwt.sign({ sub: user.id, stage: 'pre-mfa' }, JWT_SECRET, {
       expiresIn: '5m',
     });
     return res.json({ mfaRequired: true, preAuthToken });
   }
-    const token = jwt.sign({ sub: user.id, email: user.email, isAdmin: false }, JWT_SECRET, {
-   
+
+  // isAdmin is always false on a no-MFA login — admin rights are only ever
+  // granted in the token issued by /mfa/verify below, so admin access
+  // structurally requires MFA every time.
+  const token = jwt.sign({ sub: user.id, email: user.email, isAdmin: false }, JWT_SECRET, {
     expiresIn: JWT_EXPIRY,
   });
   res.json({ mfaRequired: false, token });
 });
 
-
-// --- Login: step 2 (verify TOTP code) --------------------------------------
+// --- Login: step 2 (verify the authenticator code) --------------------------
 app.post('/mfa/verify', async (req, res) => {
   const { preAuthToken, code } = req.body;
   if (!preAuthToken || !code) {
@@ -206,25 +216,21 @@ app.post('/mfa/verify', async (req, res) => {
     secret: user.mfa_secret,
     encoding: 'base32',
     token: code,
-    window: 1, // allow 1 step (~30s) of clock drift
+    window: 1,
   });
+  if (!verified) return res.status(401).json({ error: 'invalid MFA code' });
 
-    if (!verified) return res.status(401).json({ error: 'invalid MFA code' });
+  // This is the ONLY place isAdmin can be true in an issued token — i.e.
+  // only ever right after a successful MFA check.
   const token = jwt.sign({ sub: user.id, email: user.email, isAdmin: user.is_admin }, JWT_SECRET, {
-    // This is the ONLY place isAdmin can be true in an issued token — i.e.
-    // only ever right after a successful MFA check.
     expiresIn: JWT_EXPIRY,
   });
   res.json({ token });
 });
 
-// One-time bootstrap: promotes an existing (already-registered) account to
-// admin. Protected by the shared ADMIN_API_KEY, used only for this — every
-// admin action after promotion uses that admin's own normal login + MFA,
-// never the shared key again. Since isAdmin is only ever granted in a
-// post-MFA token (see /mfa/verify above), a promoted account can't actually
-// use any admin feature until it has MFA set up (/mfa-setup, same flow
-// every user goes through).
+// --- One-time bootstrap: promote an existing account to admin ---------------
+// Protected by the shared ADMIN_API_KEY, used only for this. Every admin
+// action after promotion uses that admin's own login + MFA.
 app.post('/admin/promote', async (req, res) => {
   const key = req.headers['x-admin-key'];
   if (!key || key !== process.env.ADMIN_API_KEY) {
@@ -248,7 +254,7 @@ app.post('/admin/promote', async (req, res) => {
   });
 });
 
-// --- Token verification endpoint, used by API Gateway / other services ---
+// --- Token verification endpoint, used by other services --------------------
 app.post('/verify-token', (req, res) => {
   const { token } = req.body;
   try {
@@ -256,6 +262,79 @@ app.post('/verify-token', (req, res) => {
     res.json({ valid: true, payload });
   } catch {
     res.status(401).json({ valid: false });
+  }
+});
+
+// --- Profile ------------------------------------------------------------------
+app.get('/me', requireAuth, async (req, res) => {
+  const result = await pool.query(
+    'SELECT id, full_name, email, mfa_enabled, created_at FROM users WHERE id = $1',
+    [req.user.sub]
+  );
+  const user = result.rows[0];
+  if (!user) return res.status(404).json({ error: 'user not found' });
+  res.json(user);
+});
+
+app.patch('/me', requireAuth, async (req, res) => {
+  const { fullName, email, currentPassword, newPassword } = req.body;
+
+  const result = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.sub]);
+  const user = result.rows[0];
+  if (!user) return res.status(404).json({ error: 'user not found' });
+
+  const newEmail = email ? email.toLowerCase().trim() : null;
+  const emailChanged = Boolean(newEmail) && newEmail !== user.email;
+
+  // Changing email or password requires proving you still know the current
+  // password, so a stolen session token alone can't lock the owner out.
+  // Changing just your display name doesn't need it.
+  if (emailChanged || newPassword) {
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'current password is required to change email or password' });
+    }
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'current password is incorrect' });
+  }
+
+  const updates = [];
+  const values = [];
+  let i = 1;
+
+  if (fullName && fullName.trim() && fullName.trim() !== user.full_name) {
+    updates.push(`full_name = $${i++}`);
+    values.push(fullName.trim());
+  }
+  if (emailChanged) {
+    updates.push(`email = $${i++}`);
+    values.push(newEmail);
+  }
+  if (newPassword) {
+    if (!isPasswordStrong(newPassword)) {
+      return res.status(400).json({ error: `new ${PASSWORD_RULE_MESSAGE}` });
+    }
+    const newHash = await bcrypt.hash(newPassword, 12);
+    updates.push(`password_hash = $${i++}`);
+    values.push(newHash);
+  }
+
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'nothing to update' });
+  }
+
+  values.push(req.user.sub);
+  try {
+    const updated = await pool.query(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${i} RETURNING id, full_name, email, mfa_enabled, created_at`,
+      values
+    );
+    res.json(updated.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'that email is already in use' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'failed to update profile' });
   }
 });
 

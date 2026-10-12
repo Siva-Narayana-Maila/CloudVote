@@ -3,11 +3,9 @@ const jwt = require('jsonwebtoken');
 const ExcelJS = require('exceljs');
 const router = express.Router();
 
-// Verifies a normal session JWT (the same one auth-service issues on
-// login) and requires its isAdmin claim to be true. Since auth-service
-// only ever sets isAdmin: true in a token issued right after a successful
-// MFA check, this makes "admin access requires MFA every time" a
-// structural fact rather than a header someone could share or leak.
+// Verifies a normal session JWT and requires its isAdmin claim. auth-service
+// only sets isAdmin: true in a token issued right after a successful MFA
+// check, so admin access structurally requires MFA every time.
 function requireAdmin(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -23,8 +21,48 @@ function requireAdmin(req, res, next) {
     res.status(401).json({ error: 'invalid or expired token' });
   }
 }
+
+// Records who did what. A failure to write the log must never block the
+// admin action itself, so errors are logged and swallowed.
+async function audit(pool, admin, action, targetType, targetId, details) {
+  try {
+    await pool.query(
+      `INSERT INTO admin_audit_log (admin_id, admin_email, action, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        admin.sub,
+        admin.email,
+        action,
+        targetType,
+        targetId ? String(targetId) : null,
+        details ? JSON.stringify(details) : null,
+      ]
+    );
+  } catch (err) {
+    console.error('[admin] failed to write audit log:', err.message);
+  }
+}
+
 module.exports = function adminRouter(pool) {
   router.use(requireAdmin);
+
+  // Recent admin activity, newest first.
+  router.get('/audit-log', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, admin_email, action, target_type, target_id, details, created_at
+         FROM admin_audit_log
+         ORDER BY created_at DESC, id DESC
+         LIMIT $1`,
+        [limit]
+      );
+      res.json({ entries: rows });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'failed to load activity log' });
+    }
+  });
 
   // List all elections, for the admin portal's picker.
   router.get('/elections', async (_req, res) => {
@@ -34,7 +72,7 @@ module.exports = function adminRouter(pool) {
     res.json({ elections: rows });
   });
 
-  // Single election + its candidates + live vote counts, for the edit view.
+  // Single election + its candidates + live vote counts.
   router.get('/elections/:id', async (req, res) => {
     const electionRow = await pool.query(
       'SELECT id, name, opens_at, closes_at, is_active FROM elections WHERE id = $1',
@@ -73,7 +111,9 @@ module.exports = function adminRouter(pool) {
         [name, closesAt]
       );
       await client.query('COMMIT');
-      res.status(201).json(inserted.rows[0]);
+      const created = inserted.rows[0];
+      await audit(pool, req.admin, 'election.create', 'election', created.id, { name: created.name, closesAt });
+      res.status(201).json(created);
     } catch (err) {
       await client.query('ROLLBACK');
       console.error(err);
@@ -88,10 +128,11 @@ module.exports = function adminRouter(pool) {
     const { name, closesAt, isActive } = req.body;
     const updates = [];
     const values = [];
+    const changes = {};
     let i = 1;
-    if (name) { updates.push(`name = $${i++}`); values.push(name); }
-    if (closesAt) { updates.push(`closes_at = $${i++}`); values.push(closesAt); }
-    if (typeof isActive === 'boolean') { updates.push(`is_active = $${i++}`); values.push(isActive); }
+    if (name) { updates.push(`name = $${i++}`); values.push(name); changes.name = name; }
+    if (closesAt) { updates.push(`closes_at = $${i++}`); values.push(closesAt); changes.closesAt = closesAt; }
+    if (typeof isActive === 'boolean') { updates.push(`is_active = $${i++}`); values.push(isActive); changes.isActive = isActive; }
     if (updates.length === 0) return res.status(400).json({ error: 'nothing to update' });
 
     values.push(req.params.id);
@@ -106,6 +147,10 @@ module.exports = function adminRouter(pool) {
         values
       );
       if (updated.rows.length === 0) return res.status(404).json({ error: 'election not found' });
+      await audit(pool, req.admin, 'election.update', 'election', req.params.id, {
+        name: updated.rows[0].name,
+        changes,
+      });
       res.json(updated.rows[0]);
     } catch (err) {
       console.error(err);
@@ -114,9 +159,12 @@ module.exports = function adminRouter(pool) {
   });
 
   // Deletes an election — blocked if any votes have already been cast for
-  // it, to avoid destroying part of the audit trail. Deactivate (via PATCH)
-  // a live election instead of deleting it.
+  // it, to avoid destroying part of the audit trail.
   router.delete('/elections/:id', async (req, res) => {
+    const existing = await pool.query('SELECT name FROM elections WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'election not found' });
+    const electionName = existing.rows[0].name;
+
     const voteCheck = await pool.query(
       `SELECT COUNT(*)::int AS n FROM vote_ledger vl
        JOIN candidates c ON c.id = vl.candidate_id
@@ -130,9 +178,9 @@ module.exports = function adminRouter(pool) {
     try {
       await client.query('BEGIN');
       await client.query('DELETE FROM candidates WHERE election_id = $1', [req.params.id]);
-      const deleted = await client.query('DELETE FROM elections WHERE id = $1 RETURNING id', [req.params.id]);
+      await client.query('DELETE FROM elections WHERE id = $1', [req.params.id]);
       await client.query('COMMIT');
-      if (deleted.rows.length === 0) return res.status(404).json({ error: 'election not found' });
+      await audit(pool, req.admin, 'election.delete', 'election', req.params.id, { name: electionName });
       res.json({ deleted: true });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -156,6 +204,7 @@ module.exports = function adminRouter(pool) {
          RETURNING id, name, role, bio, color, photo_url, symbol`,
         [id, electionId, name, role || null, bio || null, color || null, photoUrl || null, symbol || null]
       );
+      await audit(pool, req.admin, 'candidate.add', 'candidate', id, { name, electionId });
       res.status(201).json(inserted.rows[0]);
     } catch (err) {
       if (err.code === '23505') {
@@ -166,9 +215,12 @@ module.exports = function adminRouter(pool) {
     }
   });
 
-  // Removes a candidate — blocked if they already have votes, same
-  // reasoning as election deletion above.
+  // Removes a candidate — blocked if they already have votes.
   router.delete('/candidates/:id', async (req, res) => {
+    const existing = await pool.query('SELECT name FROM candidates WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'candidate not found' });
+    const candidateName = existing.rows[0].name;
+
     const voteCheck = await pool.query(
       'SELECT COUNT(*)::int AS n FROM vote_ledger WHERE candidate_id = $1',
       [req.params.id]
@@ -176,13 +228,12 @@ module.exports = function adminRouter(pool) {
     if (voteCheck.rows[0].n > 0) {
       return res.status(409).json({ error: 'cannot remove a candidate who already has votes cast' });
     }
-    const deleted = await pool.query('DELETE FROM candidates WHERE id = $1 RETURNING id', [req.params.id]);
-    if (deleted.rows.length === 0) return res.status(404).json({ error: 'candidate not found' });
+    await pool.query('DELETE FROM candidates WHERE id = $1', [req.params.id]);
+    await audit(pool, req.admin, 'candidate.remove', 'candidate', req.params.id, { name: candidateName });
     res.json({ deleted: true });
   });
 
-  // Excel report: a summary sheet plus one row per candidate with vote
-  // counts and percentages. Streamed directly, never written to disk.
+  // Excel report: a summary sheet plus one row per candidate.
   router.get('/elections/:id/report.xlsx', async (req, res) => {
     const electionRow = await pool.query(
       'SELECT id, name, opens_at, closes_at FROM elections WHERE id = $1',
@@ -205,7 +256,7 @@ module.exports = function adminRouter(pool) {
     const eligibleVoters = eligibleRow.rows[0].n;
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'CloudVote';
+    workbook.creator = 'Ballotique';
     workbook.created = new Date();
 
     const summary = workbook.addWorksheet('Summary');
@@ -240,6 +291,9 @@ module.exports = function adminRouter(pool) {
       });
     });
     results.getRow(1).font = { bold: true };
+
+    // Logged before streaming, since nothing can be done after res.end().
+    await audit(pool, req.admin, 'report.export', 'election', election.id, { name: election.name });
 
     res.setHeader(
       'Content-Type',

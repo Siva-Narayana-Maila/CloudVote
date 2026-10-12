@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import Logo from '../components/Logo';
 
 const STAGE = { CREDENTIALS: 'credentials', MFA: 'mfa' };
 
@@ -51,7 +52,10 @@ export default function SignIn() {
 
   return (
     <div className="shell" style={{ display: 'flex', justifyContent: 'center', paddingTop: 64 }}>
-      <div className="card" style={{ padding: 32, width: 400 }}>
+            <div className="card" style={{ padding: 32, width: 400 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <Logo size={40} wordmarkSize={20} />
+        </div>
         <span className="eyebrow">Member access</span>
 
         {stage === STAGE.CREDENTIALS ? (
@@ -69,7 +73,7 @@ export default function SignIn() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.co"
+                  placeholder="Enter email"
                   style={inputStyle}
                 />
               </Field>
@@ -80,6 +84,7 @@ export default function SignIn() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={inputStyle}
+                  placeholder="Enter password"
                 />
               </Field>
 

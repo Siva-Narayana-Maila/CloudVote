@@ -57,6 +57,8 @@ export const api = {
     request('/vote', { method: 'POST', body: { candidateId }, auth: true }),
   getElection: () => request('/election'),
   getResults: () => request('/results'),
+  getArchive: () => request('/archive'),
+  getStatus: () => request('/status'),
   getLedgerIntegrity: () => request('/ledger/integrity'),
   verifyReceipt: (receiptId) => request(`/ledger/verify/${encodeURIComponent(receiptId)}`),
   getToken,

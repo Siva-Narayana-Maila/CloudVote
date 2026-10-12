@@ -1,11 +1,6 @@
 version: '3.9'
 
-# Runs the entire CloudVote stack locally — Postgres, all 3 microservices,
-# the gateway, and the frontend — with zero cloud dependency. Every service
-# below is configured purely through environment variables, so when you're
-# ready to deploy, the k8s/ manifests reuse these exact same variable names;
-# only the *values* change (e.g. DATABASE_URL points at Cloud SQL instead of
-# this local `postgres` container). No application code changes.
+
 
 services:
   postgres:
@@ -35,7 +30,7 @@ services:
       PORT: 4001
       DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-any-real-use}
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-Siva123}
     ports:
       - '4001:4001'
 
@@ -51,7 +46,7 @@ services:
       PORT: 4002
       DATABASE_URL: postgres://cloudvote:cloudvote@postgres:5432/cloudvote
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-any-real-use}
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-Siva123}
     ports:
       - '4002:4002'
 

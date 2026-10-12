@@ -1,20 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 
 export default function VerifyReceipt() {
-  const [receiptId, setReceiptId] = useState('');
+  const [params] = useSearchParams();
+  const initialId = params.get('receipt') || '';
+
+  const [receiptId, setReceiptId] = useState(initialId);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleVerify(e) {
-    e.preventDefault();
+  async function verify(id) {
     setError(null);
     setResult(null);
     setLoading(true);
     try {
-      const data = await api.verifyReceipt(receiptId.trim());
-      setResult(data);
+      setResult(await api.verifyReceipt(id.trim()));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -22,17 +24,28 @@ export default function VerifyReceipt() {
     }
   }
 
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (receiptId.trim()) verify(receiptId);
+  }
+
+  // Opened from a receipt's QR code: verify straight away, no typing needed.
+  useEffect(() => {
+    if (initialId) verify(initialId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="shell" style={{ paddingTop: 56, display: 'flex', justifyContent: 'center' }}>
       <div className="card" style={{ padding: 32, width: 440 }}>
         <span className="eyebrow">Public verification</span>
         <h2 style={{ fontSize: 22, marginTop: 16 }}>Verify a receipt.</h2>
         <p style={{ marginTop: 8, fontSize: 13.5 }}>
-          Paste any receipt ID to independently confirm it's recorded in the ledger — no sign-in
-          required.
+          Paste any receipt ID — or scan its QR code — to independently confirm it's recorded in
+          the ledger. No sign-in required.
         </p>
 
-        <form onSubmit={handleVerify} style={{ marginTop: 20 }}>
+        <form onSubmit={handleSubmit} style={{ marginTop: 20 }}>
           <input
             value={receiptId}
             onChange={(e) => setReceiptId(e.target.value)}
@@ -44,6 +57,7 @@ export default function VerifyReceipt() {
               borderRadius: 10,
               border: '1px solid var(--color-border)',
               background: 'var(--color-surface-sunken)',
+              color: 'var(--color-ink)',
               marginBottom: 14,
             }}
           />
@@ -60,8 +74,8 @@ export default function VerifyReceipt() {
               marginTop: 16,
               padding: 16,
               borderRadius: 10,
-              background: result.verified ? '#e6f0ea' : '#fbeee9',
-              color: result.verified ? 'var(--color-teal-700)' : 'var(--color-danger)',
+              background: result.verified ? 'rgba(46, 143, 86, 0.14)' : 'rgba(161, 58, 44, 0.1)',
+              color: result.verified ? '#2e8f56' : 'var(--color-danger)',
               fontSize: 13.5,
             }}
           >

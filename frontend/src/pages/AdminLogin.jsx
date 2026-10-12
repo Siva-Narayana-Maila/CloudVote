@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
+import Logo from '../components/Logo';
 
 const STAGE = { CREDENTIALS: 'credentials', MFA: 'mfa' };
 
@@ -53,7 +54,10 @@ export default function AdminLogin() {
 
   return (
     <div className="shell" style={{ display: 'flex', justifyContent: 'center', paddingTop: 64 }}>
-      <div className="card" style={{ padding: 32, width: 400 }}>
+            <div className="card" style={{ padding: 32, width: 400 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <Logo size={40} wordmarkSize={20} />
+        </div>
         <span className="eyebrow">Admin access</span>
 
         {stage === STAGE.CREDENTIALS ? (

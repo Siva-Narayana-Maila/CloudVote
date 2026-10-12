@@ -1,8 +1,21 @@
+import { useEffect, useState } from 'react';
 import { useLocation, Navigate, Link } from 'react-router-dom';
+import QRCode from 'qrcode';
 
 export default function Receipt() {
   const { state } = useLocation();
   const receipt = state?.receipt;
+  const [qr, setQr] = useState(null);
+
+  // The QR code encodes a link to the public verification page with this
+  // receipt pre-filled, so "prove my vote was counted" is one scan.
+  useEffect(() => {
+    if (!receipt) return;
+    const url = `${window.location.origin}/verify?receipt=${encodeURIComponent(receipt.receiptId)}`;
+    QRCode.toDataURL(url, { width: 180, margin: 1, color: { dark: '#0b1f3a', light: '#ffffff' } })
+      .then(setQr)
+      .catch(() => setQr(null));
+  }, [receipt]);
 
   // Someone landing here directly (refresh, bookmarked URL) has no receipt
   // in memory — send them back rather than show a broken confirmation.
@@ -33,17 +46,30 @@ export default function Receipt() {
         vote ledger. Keep this receipt to verify inclusion later.
       </p>
 
-      <div className="card" style={{ marginTop: 28, padding: 24, textAlign: 'left' }}>
+      <div className="card" style={{ marginTop: 28, padding: 24, textAlign: 'left', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <span style={{ fontSize: 13, fontWeight: 500 }}>Northstar Cooperative election</span>
-          <span className="eyebrow" style={{ background: '#e6f0ea', color: 'var(--color-teal-700)' }}>Verified</span>
+          <span style={{ fontSize: 13, fontWeight: 500 }}>Election receipt</span>
+          <span className="eyebrow" style={{ background: 'rgba(46, 143, 86, 0.14)', color: '#2e8f56' }}>Verified</span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <ReceiptField label="Receipt ID" value={receipt.receiptId} />
-          <ReceiptField label="Timestamp" value={new Date(receipt.castAt).toLocaleString()} />
-          <ReceiptField label="Ledger position" value={`#${receipt.ledgerPosition}`} />
-          <ReceiptField label="Commitment hash" value={`sha256: ${receipt.commitmentHash.slice(0, 12)}…`} />
+        <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 260, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <ReceiptField label="Receipt ID" value={receipt.receiptId} />
+            <ReceiptField label="Timestamp" value={new Date(receipt.castAt).toLocaleString()} />
+            <ReceiptField label="Ledger position" value={`#${receipt.ledgerPosition}`} />
+            <ReceiptField label="Commitment hash" value={`sha256: ${receipt.commitmentHash.slice(0, 12)}…`} />
+          </div>
+
+          {qr && (
+            <div style={{ textAlign: 'center' }}>
+              <img
+                src={qr}
+                alt="QR code that opens this receipt's verification page"
+                style={{ width: 150, height: 150, borderRadius: 8, border: '1px solid var(--color-border)', background: '#fff' }}
+              />
+              <p style={{ fontSize: 11, marginTop: 6 }}>Scan to verify</p>
+            </div>
+          )}
         </div>
 
         <p style={{ marginTop: 18, fontSize: 12, borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
@@ -56,13 +82,13 @@ export default function Receipt() {
         <Link to="/results" className="btn btn-primary">See live results</Link>
         <Link to="/" className="btn btn-secondary">Return to overview</Link>
       </div>
-            <p style={{ marginTop: 16, fontSize: 12 }}>
-        <Link to="/verify" style={{ color: 'var(--color-teal-700)', fontWeight: 500 }}>
+
+      <p style={{ marginTop: 16, fontSize: 12 }}>
+        <Link to={`/verify?receipt=${encodeURIComponent(receipt.receiptId)}`} style={{ color: 'var(--color-teal-700)', fontWeight: 500 }}>
           Verify this receipt independently →
         </Link>
       </p>
     </div>
-    
   );
 }
 
@@ -70,7 +96,7 @@ function ReceiptField({ label, value }) {
   return (
     <div>
       <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>{label}</p>
-      <p className="mono" style={{ color: 'var(--color-ink)' }}>{value}</p>
+      <p className="mono" style={{ color: 'var(--color-ink)', wordBreak: 'break-all' }}>{value}</p>
     </div>
   );
 }

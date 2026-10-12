@@ -1,3 +1,4 @@
+import Logo from './Logo';
 export default function Footer() {
   return (
     <footer className="site-footer">
@@ -5,15 +6,9 @@ export default function Footer() {
         <div className="footer-grid">
           <div>
             <div className="footer-brand">
-              <span
-                className="mark"
-                style={{
-                  background: 'linear-gradient(135deg, var(--color-teal-600), var(--color-gold))',
-                }}
-              />
-              cloudvote
+              <Logo size={26} wordmarkSize={15} variant="light" />
             </div>
-            <p style={{ fontSize: 13, color: '#a9c4ba', maxWidth: 260, lineHeight: 1.6 }}>
+            <p style={{ fontSize: 13, color: '#c9b0b4', maxWidth: 260, lineHeight: 1.6 }}>
               A trustworthy room for every voice — private ballots, an auditable ledger, and
               results you can verify yourself.
             </p>
@@ -25,6 +20,8 @@ export default function Footer() {
             <a href="/vote">Vote</a>
             <a href="/results">Live results</a>
             <a href="/verify">Verify a receipt</a>
+            <a href="/archive">Election archive</a>
+            <a href="/status">System status</a>
           </div>
 
           <div className="footer-col">
@@ -42,7 +39,7 @@ export default function Footer() {
         </div>
 
         <div className="footer-bottom">
-          <span>© {new Date().getFullYear()} CloudVote — demo environment</span>
+          <span>© {new Date().getFullYear()} Ballotique — demo environment</span>
           <span>v1.4.0</span>
         </div>
       </div>

@@ -86,3 +86,34 @@ CREATE TABLE IF NOT EXISTS user_votes (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS symbol TEXT;
+
+CREATE TABLE IF NOT EXISTS user_votes (
+    user_id      UUID NOT NULL REFERENCES users(id),
+    election_id  UUID NOT NULL REFERENCES elections(id),
+    receipt_id   TEXT NOT NULL REFERENCES vote_ledger(receipt_id),
+    cast_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, election_id)
+);
+
+-- Who did what in the admin portal.
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id          BIGSERIAL PRIMARY KEY,
+    admin_id    UUID,
+    admin_email TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id   TEXT,
+    details     JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_log(created_at DESC);
