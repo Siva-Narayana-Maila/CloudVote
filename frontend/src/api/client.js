@@ -47,7 +47,8 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
 }
 
 export const api = {
-  register: (email, password) => request('/auth/register', { method: 'POST', body: { email, password } }),
+  register: (fullName, email, password) =>
+    request('/auth/register', { method: 'POST', body: { fullName, email, password } }),
   mfaSetup: () => request('/auth/mfa/setup', { method: 'POST', auth: true }),
   mfaConfirmSetup: (code) => request('/auth/mfa/confirm-setup', { method: 'POST', body: { code }, auth: true }),
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),

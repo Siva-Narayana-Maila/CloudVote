@@ -1,0 +1,116 @@
+# Production stack for a single cloud VM (AWS EC2).
+#
+# How this differs from docker-compose.yml (local development):
+#   - Only Caddy publishes ports (80/443). Postgres and every service stay on
+#     the private Docker network and are unreachable from the internet.
+#   - Secrets come from .env and have NO defaults: the stack refuses to start
+#     if any are missing, so a weak "dev" secret can never reach production.
+#   - Caddy obtains and renews a free HTTPS certificate automatically.
+#   - Memory limits keep one runaway container from starving the others on a
+#     small VM.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ballotique
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ballotique
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ballotique']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+
+  # auth-service creates the database tables on startup, so the other
+  # services wait for it to report healthy (i.e. schema ready) before starting.
+  auth-service:
+    build: ./services/auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4001
+      DATABASE_URL: postgres://ballotique:${POSTGRES_PASSWORD}@postgres:5432/ballotique
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?Set ADMIN_API_KEY in .env}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4001/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    mem_limit: 256m
+
+  voting-service:
+    build: ./services/voting-service
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+    environment:
+      PORT: 4002
+      DATABASE_URL: postgres://ballotique:${POSTGRES_PASSWORD}@postgres:5432/ballotique
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+    mem_limit: 256m
+
+  tally-service:
+    build: ./services/tally-service
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+    environment:
+      PORT: 4003
+      DATABASE_URL: postgres://ballotique:${POSTGRES_PASSWORD}@postgres:5432/ballotique
+    mem_limit: 256m
+
+  api-gateway:
+    build: ./api-gateway
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - voting-service
+      - tally-service
+    environment:
+      PORT: 8080
+      CORS_ORIGIN: https://${DOMAIN:?Set DOMAIN in .env}
+      AUTH_SERVICE_URL: http://auth-service:4001
+      VOTING_SERVICE_URL: http://voting-service:4002
+      TALLY_SERVICE_URL: http://tally-service:4003
+    mem_limit: 256m
+
+  # Serves the React app and proxies /api to the gateway. Not published to the
+  # internet directly — Caddy sits in front of it.
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+    mem_limit: 128m
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    mem_limit: 128m
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
