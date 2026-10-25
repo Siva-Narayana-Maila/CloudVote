@@ -1,0 +1,9 @@
+# Caddy terminates HTTPS (certificates are obtained and renewed automatically)
+# and forwards everything to the frontend container. HTTP is redirected to
+# HTTPS automatically. flush_interval -1 makes sure the live-results stream
+# (Server-Sent Events) is delivered immediately instead of being buffered.
+{$DOMAIN} {
+    reverse_proxy frontend:80 {
+        flush_interval -1
+    }
+}
