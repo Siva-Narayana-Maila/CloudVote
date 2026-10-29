@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('./db');
 const { appendVote } = require('./ledger');
 const adminRouter = require('./admin');
+const { createMailer } = require('./mailer');
 
 const app = express();
 app.use(helmet());
@@ -24,6 +25,11 @@ if (!JWT_SECRET) {
   console.error('FATAL: JWT_SECRET is not set. Refusing to start.');
   process.exit(1);
 }
+
+const mailer = createMailer();
+console.log(
+  `[voting-service] receipt emails: ${mailer.enabled ? 'enabled' : 'disabled (SMTP not configured)'}`
+);
 
 app.use('/admin', adminRouter(pool));
 
@@ -48,6 +54,35 @@ async function getOpenElection(client) {
   if (!election) return null;
   if (new Date(election.closes_at) <= new Date()) return null;
   return election;
+}
+
+// Emails the voter their receipt. Runs after the vote is committed and the
+// response has been sent, so a slow or broken mail server can never affect
+// the ballot itself.
+async function notifyVoter({ userId, electionId, candidateId, receipt }) {
+  if (!mailer.enabled) return;
+  const { rows } = await pool.query(
+    `SELECT u.email, u.full_name, e.name AS election_name, c.name AS candidate_name, c.symbol
+     FROM users u, elections e, candidates c
+     WHERE u.id = $1 AND e.id = $2 AND c.id = $3`,
+    [userId, electionId, candidateId]
+  );
+  const row = rows[0];
+  if (!row) return;
+
+  await mailer.sendVoteReceipt({
+    to: row.email,
+    name: row.full_name,
+    electionName: row.election_name,
+    candidateName: row.candidate_name,
+    candidateSymbol: row.symbol,
+    receipt: {
+      receiptId: receipt.receipt_id,
+      ledgerPosition: receipt.ledger_position,
+      commitmentHash: receipt.current_hash,
+      castAt: receipt.cast_at,
+    },
+  });
 }
 
 app.post('/vote', requireAuth, async (req, res) => {
@@ -102,6 +137,12 @@ app.post('/vote', requireAuth, async (req, res) => {
       commitmentHash: receipt.current_hash,
       castAt: receipt.cast_at,
     });
+
+    // Fire-and-forget: the vote is already safe, so email problems are only
+    // logged, never shown to the voter.
+    notifyVoter({ userId: req.user.sub, electionId: election.id, candidateId, receipt }).catch((err) =>
+      console.error('[voting-service] receipt email failed:', err.message)
+    );
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (err.code === '23505') {

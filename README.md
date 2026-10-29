@@ -48,4 +48,7 @@ Frontend: http://localhost:3000 · Gateway: http://localhost:8080
 
 ## Cloud
 
-Deployed on **Google Kubernetes Engine (GKE)** — see `docs/cloud-decision.md` for why GCP was chosen over AWS for this project.
+Deployed on **AWS**: an EC2 instance running the Docker Compose stack behind
+Caddy (automatic HTTPS). See `docs/design-decisions.md` for why AWS, why
+PostgreSQL instead of QLDB, and how each component maps to AWS managed
+services.
