@@ -1,0 +1,65 @@
+name: CI
+
+# Runs on every push to main and on every pull request. Nothing here touches
+# the live server — it only checks that the code is healthy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax-check every backend file
+        run: |
+          set -e
+          count=0
+          for f in $(find services api-gateway -name '*.js' -not -path '*/node_modules/*'); do
+            node --check "$f"
+            count=$((count + 1))
+          done
+          echo "Checked $count files, no syntax errors"
+
+      - name: Unit tests
+        run: node --test services/tally-service/test/archive.test.js
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Production build
+        run: npm run build
+
+  compose:
+    name: Deployment config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.prod.yml
+        env:
+          DOMAIN: example.test
+          POSTGRES_PASSWORD: ci-placeholder
+          JWT_SECRET: ci-placeholder
+          ADMIN_API_KEY: ci-placeholder
+        run: docker compose -f docker-compose.prod.yml config --quiet

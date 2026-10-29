@@ -1,5 +1,18 @@
+# Dependencies and build output
 node_modules/
 dist/
+
+# Secrets and credentials — must NEVER be committed
 .env
+.env.*
+!.env.example
+!.env.production.example
+prod.env
+*.pem
+*.key
+
+# Packages and logs
+*.tgz
+*.zip
 *.log
 .DS_Store

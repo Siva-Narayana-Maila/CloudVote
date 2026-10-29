@@ -1,0 +1,7 @@
+# Keep line endings as LF everywhere, so files written on Windows never break
+# Linux containers (Dockerfiles, nginx.conf, Caddyfile, shell scripts).
+* text=auto eol=lf
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.ico binary
