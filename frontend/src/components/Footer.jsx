@@ -40,7 +40,7 @@ export default function Footer() {
 
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} Ballotique — demo environment</span>
-          <span>v1.4.0</span>
+          <span>v1.5.0</span>
         </div>
       </div>
     </footer>
