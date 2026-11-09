@@ -1,0 +1,26 @@
+# Traefik (bundled with k3s) replaces Caddy. /api goes straight to the gateway
+# (so the Docker-only nginx resolver 127.0.0.11 in frontend/nginx.conf is never used),
+# everything else to the React/nginx container. Traefik streams responses without
+# buffering, so the live-results SSE endpoint works unchanged.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ballotique
+  namespace: ballotique
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: le
+spec:
+  tls:
+    - hosts: ["DOMAIN_PLACEHOLDER"]
+  rules:
+    - host: DOMAIN_PLACEHOLDER
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: api-gateway, port: { number: 8080 } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { number: 80 } } }

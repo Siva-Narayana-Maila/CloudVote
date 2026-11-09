@@ -90,7 +90,7 @@ jobs:
         export PREV_COMMIT=$(git rev-parse HEAD) &&
         git fetch --quiet origin main &&
         git reset --hard --quiet origin/main &&
-        bash deploy/deploy.sh'
+        bash deploy/deploy-k3s.sh'
     steps:
       - name: Sign in to AWS (short-lived, no stored keys)
         uses: aws-actions/configure-aws-credentials@v4

@@ -1,0 +1,49 @@
+# PostgreSQL as a StatefulSet with a persistent volume (k3s "local-path" storage,
+# i.e. a directory on the EC2 disk). The password comes from the Secret that
+# deploy/create-secrets.sh builds from the server's .env file.
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: ballotique }
+spec:
+  clusterIP: None
+  selector: { app: postgres }
+  ports: [{ port: 5432, name: pg }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: postgres, namespace: ballotique }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_USER, value: ballotique }
+            - { name: POSTGRES_DB, value: ballotique }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: ballotique-env, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "ballotique"] }
+            periodSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "ballotique"] }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { memory: 128Mi, cpu: 50m }
+            limits: { memory: 512Mi }
+          volumeMounts: [{ name: pgdata, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources: { requests: { storage: 5Gi } }
